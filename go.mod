@@ -1,4 +1,4 @@
-module learn-websocket
+module github.com/zulfikarrosadi/knowledge-hub-api
 
 go 1.23.2
 
