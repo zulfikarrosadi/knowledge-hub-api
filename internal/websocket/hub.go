@@ -10,33 +10,69 @@ type Hub struct {
 	Rooms map[string]map[*Client]bool
 
 	// to send the message to the same websocket connection
-	Broadcast chan *Message
+	Broadcast chan *WsPayload[WsData]
 
 	// to add new client / new websocket connection to the map
 	Register chan *Client
 
 	// to remove websocket connection from the map
 	Unregister chan *Client
+
+	CheckRoomId chan *QueryRoomId
+}
+
+type QueryRoomId struct {
+	RoomId string
+	Reply  chan bool
 }
 
 func NewHub() *Hub {
 	return &Hub{
-		Broadcast:  make(chan *Message),
-		Register:   make(chan *Client),
-		Unregister: make(chan *Client),
-		Rooms:      make(map[string]map[*Client]bool),
+		Broadcast:   make(chan *WsPayload[WsData]),
+		Register:    make(chan *Client),
+		Unregister:  make(chan *Client),
+		Rooms:       make(map[string]map[*Client]bool),
+		CheckRoomId: make(chan *QueryRoomId),
 	}
 }
 
 func (h *Hub) Run() {
 	for {
 		select {
-		case client := <-h.Register:
-			if _, exist := h.Rooms[client.RoomId]; !exist {
-				h.Rooms[client.RoomId] = make(map[*Client]bool)
-				h.Rooms[client.RoomId][client] = true
-				log.Printf("Client registered to room %s", client.RoomId)
+		case newClient := <-h.Register:
+			client, exist := h.Rooms[newClient.RoomId]
+			if !exist {
+				h.Rooms[newClient.RoomId] = make(map[*Client]bool)
+
+				res := &WsPayload[WsData]{
+					Type:    CREATE_ROOM,
+					Status:  "success",
+					IsOwner: newClient.IsRoomOwner,
+					Data: WsData{
+						RoomId: newClient.RoomId,
+					},
+				}
+				newClient.Send <- res
+			} else {
+				// user is join to existing room
+				// broadcasting to room owner
+				res := &WsPayload[WsData]{
+					Type:    JOIN_ROOM,
+					Status:  "pending",
+					IsOwner: newClient.IsRoomOwner,
+					Data: WsData{
+						RoomId: newClient.RoomId,
+					},
+				}
+				for c := range client {
+					if c.IsRoomOwner {
+						c.Send <- res
+						break
+					}
+				}
 			}
+			h.Rooms[newClient.RoomId][newClient] = true
+			log.Printf("Client registered to room %s", newClient.RoomId)
 		case client := <-h.Unregister:
 			if _, exist := h.Rooms[client.RoomId]; exist {
 				delete(h.Rooms[client.RoomId], client)
@@ -47,16 +83,23 @@ func (h *Hub) Run() {
 			}
 			log.Printf("Client unregistered from room %s", client.RoomId)
 		case message := <-h.Broadcast:
-			if clientInRoom, exist := h.Rooms[message.RoomId]; exist {
+			if clientInRoom, exist := h.Rooms[message.Data.RoomId]; exist {
 				for client := range clientInRoom {
-					select {
-					case client.Send <- message.Data:
-					default:
-						close(client.Send)
-						delete(clientInRoom, client)
+					if message.Status == CONN_REJECTED {
+						h.Unregister <- client
+					} else {
+						select {
+						case client.Send <- message:
+						default:
+							close(client.Send)
+							delete(clientInRoom, client)
+						}
 					}
 				}
 			}
+		case query := <-h.CheckRoomId:
+			_, exist := h.Rooms[query.RoomId]
+			query.Reply <- exist
 		}
 	}
 }
