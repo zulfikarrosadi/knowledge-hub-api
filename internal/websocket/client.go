@@ -6,6 +6,14 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+const (
+	CREATE_ROOM   = "create-room"
+	JOIN_ROOM     = "join-room"
+	CONN_APPROVED = "approved"
+	CONN_PENDING  = "pending"
+	CONN_REJECTED = "rejected"
+)
+
 // middleman between websocket connection and the hub
 // represent one single client connection
 type Client struct {
@@ -13,15 +21,27 @@ type Client struct {
 	Conn *websocket.Conn
 
 	// buffered channel of outbound message
-	Send chan []byte
+	Send chan *WsPayload[WsData]
 
 	RoomId string
+
+	// status connection e.g approved, pending, rejected
+	// join room operation will check if new connection in a room is approved or not
+	Status string
+
+	IsRoomOwner bool
 }
 
-// Message is the object that will be sent to broadcast channel
-type Message struct {
-	Data   []byte
-	RoomId string
+type WsData struct {
+	RoomId string `json:"room_id"`
+}
+
+type WsPayload[T any] struct {
+	Type string `json:"type"`
+	// give user info wether the connection is success, pending, fail or rejected
+	Status  string `json:"status"`
+	Data    T      `json:"data,omitempty"`
+	IsOwner bool   `json:"is_owner"`
 }
 
 func (c *Client) ReadPump() {
@@ -31,20 +51,21 @@ func (c *Client) ReadPump() {
 	}()
 
 	for {
-		_, data, err := c.Conn.ReadMessage()
+		data := &WsPayload[WsData]{}
+		err := c.Conn.ReadJSON(data)
 		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+			if websocket.IsUnexpectedCloseError(
+				err,
+				websocket.CloseGoingAway,
+				websocket.CloseAbnormalClosure,
+			) {
 				log.Printf("error: %v", err)
 			}
 			break
 		}
 
 		// create a message and send it to hub broadcast channel
-		msg := &Message{
-			Data:   data,
-			RoomId: c.RoomId,
-		}
-		c.Hub.Broadcast <- msg
+		c.Hub.Broadcast <- data
 	}
 }
 
@@ -61,7 +82,7 @@ func (c *Client) WritePump() {
 				c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
-			c.Conn.WriteMessage(websocket.TextMessage, message)
+			c.Conn.WriteJSON(message)
 		}
 	}
 }
