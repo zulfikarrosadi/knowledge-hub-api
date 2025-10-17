@@ -39,6 +39,7 @@ func (ah *ApiHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 	encoder := json.NewEncoder(w)
 
 	roomId := r.PathValue("code")
+	log.Printf("room id %s", roomId)
 	if roomId == "" {
 		res := ApiRes[any]{
 			Status: "fail",
@@ -61,6 +62,7 @@ func (ah *ApiHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 	}
 	ah.Hub.CheckRoomId <- &queryRoom
 	if roomExist := <-queryRoom.Reply; !roomExist {
+		log.Printf("room exist: %v", roomExist)
 		res := ApiRes[any]{
 			Status: "fail",
 			Code:   http.StatusNotFound,
@@ -100,6 +102,7 @@ func (ah *ApiHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 		Status:      internalWs.CONN_PENDING,
 		Send:        make(chan *internalWs.WsPayload[internalWs.WsData], 256),
 		IsRoomOwner: false,
+		Username:    internalWs.GenerateUsername(),
 	}
 
 	ah.Hub.Register <- &client
@@ -150,6 +153,7 @@ func (ah *ApiHandler) ServeWs(w http.ResponseWriter, r *http.Request) {
 		Send:        make(chan *internalWs.WsPayload[internalWs.WsData], 256),
 		RoomId:      RandomCrypto.String(),
 		Status:      internalWs.CONN_APPROVED,
+		Username:    internalWs.GenerateUsername(),
 		IsRoomOwner: true,
 	}
 	client.Hub.Register <- client
@@ -177,7 +181,7 @@ func main() {
 	go hub.Run()
 
 	http.HandleFunc("/v1/rooms", handler.ServeWs)
-	http.HandleFunc("GET v1/rooms/{code}", handler.JoinRoom)
+	http.HandleFunc("GET /v1/rooms/{code}", handler.JoinRoom)
 
 	log.Println("Server starting on :3000")
 	if err := http.ListenAndServe(":3000", nil); err != nil {
