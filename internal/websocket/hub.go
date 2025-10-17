@@ -43,29 +43,37 @@ func (h *Hub) Run() {
 			client, exist := h.Rooms[newClient.RoomId]
 			if !exist {
 				h.Rooms[newClient.RoomId] = make(map[*Client]bool)
+				log.Printf("room not exist, create new one: %s", newClient.RoomId)
 
 				res := &WsPayload[WsData]{
 					Type:    CREATE_ROOM,
 					Status:  "success",
 					IsOwner: newClient.IsRoomOwner,
 					Data: WsData{
-						RoomId: newClient.RoomId,
+						RoomId:   newClient.RoomId,
+						Username: newClient.Username,
 					},
 				}
 				newClient.Send <- res
 			} else {
 				// user is join to existing room
-				// broadcasting to room owner
+				log.Printf("room exist: %s", newClient.RoomId)
 				res := &WsPayload[WsData]{
 					Type:    JOIN_ROOM,
 					Status:  "pending",
 					IsOwner: newClient.IsRoomOwner,
 					Data: WsData{
-						RoomId: newClient.RoomId,
+						RoomId:   newClient.RoomId,
+						Username: newClient.Username,
 					},
 				}
+				// send confirmation to new user
+				newClient.Send <- res
+
+				// broadcasting to room owner
 				for c := range client {
 					if c.IsRoomOwner {
+						log.Printf("broadcasting to owner: %v\n", res)
 						c.Send <- res
 						break
 					}
