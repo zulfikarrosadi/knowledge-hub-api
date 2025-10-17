@@ -1,7 +1,11 @@
 package websocket
 
 import (
+	"fmt"
 	"log"
+	"math/rand"
+	"strconv"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -30,10 +34,13 @@ type Client struct {
 	Status string
 
 	IsRoomOwner bool
+
+	Username string
 }
 
 type WsData struct {
-	RoomId string `json:"room_id"`
+	RoomId   string `json:"room_id"`
+	Username string `json:"username"`
 }
 
 type WsPayload[T any] struct {
@@ -82,7 +89,27 @@ func (c *Client) WritePump() {
 				c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
+			log.Printf("send new message: %v\n", message)
 			c.Conn.WriteJSON(message)
 		}
 	}
+}
+
+func GenerateUsername() string {
+	fruits := []string{
+		"apple", "orange", "eggplant", "carrot", "cabbage",
+		"pineapple", "grape", "strawberry", "blueberry", "kiwi",
+	}
+
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	min := 10000
+	max := 99999
+	randomNumber := r.Intn(max-min+1) + min
+
+	numberStr := strconv.Itoa(randomNumber)
+
+	fruitIndex := len(numberStr) - 1
+	selectedFruit := fruits[fruitIndex]
+
+	return fmt.Sprintf("%s-%s", selectedFruit, numberStr)
 }
