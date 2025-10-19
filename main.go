@@ -1,13 +1,17 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/json"
-	"log"
+	"fmt"
+	"log/slog"
 	"math/big"
 	"net/http"
+	"os"
 
 	"github.com/gorilla/websocket"
+	"github.com/joho/godotenv"
 	internalWs "github.com/zulfikarrosadi/knowledge-hub-api/internal/websocket"
 )
 
@@ -26,20 +30,23 @@ type ApiRes[T any] struct {
 type ApiHandler struct {
 	*internalWs.Hub
 	websocket.Upgrader
+	*slog.Logger
 }
 
-func NewApiHandler(hub *internalWs.Hub, upgrader websocket.Upgrader) *ApiHandler {
+func NewApiHandler(hub *internalWs.Hub, upgrader websocket.Upgrader, log *slog.Logger) *ApiHandler {
 	return &ApiHandler{
 		Hub:      hub,
 		Upgrader: upgrader,
+		Logger:   log,
 	}
 }
 
 func (ah *ApiHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {
+	ctx := context.TODO()
 	encoder := json.NewEncoder(w)
 
 	roomId := r.PathValue("code")
-	log.Printf("room id %s", roomId)
+	ah.Logger.LogAttrs(ctx, slog.LevelDebug, "request", slog.Group("data", slog.String("room_id", roomId)))
 	if roomId == "" {
 		res := ApiRes[any]{
 			Status: "fail",
@@ -62,7 +69,7 @@ func (ah *ApiHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 	}
 	ah.Hub.CheckRoomId <- &queryRoom
 	if roomExist := <-queryRoom.Reply; !roomExist {
-		log.Printf("room exist: %v", roomExist)
+		ah.Logger.LogAttrs(ctx, slog.LevelDebug, "request", slog.Group("data", slog.Bool("room_exist", roomExist)))
 		res := ApiRes[any]{
 			Status: "fail",
 			Code:   http.StatusNotFound,
@@ -80,6 +87,15 @@ func (ah *ApiHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 
 	conn, err := ah.Upgrader.Upgrade(w, r, nil)
 	if err != nil {
+		ah.Logger.LogAttrs(
+			ctx,
+			slog.LevelWarn,
+			"request",
+			slog.Group("error",
+				slog.String("message", "fail to upgrade connection"),
+				slog.Any("detail", err),
+			),
+		)
 		res := ApiRes[any]{
 			Status: "fail",
 			Code:   http.StatusInternalServerError,
@@ -112,9 +128,20 @@ func (ah *ApiHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 }
 
 func (ah *ApiHandler) ServeWs(w http.ResponseWriter, r *http.Request) {
+	ctx := context.TODO()
 	encoder := json.NewEncoder(w)
 	conn, err := ah.Upgrader.Upgrade(w, r, nil)
+
 	if err != nil {
+		ah.Logger.LogAttrs(
+			ctx,
+			slog.LevelWarn,
+			"request",
+			slog.Group("error",
+				slog.String("message", "fail to upgrade connection"),
+				slog.Any("detail", err),
+			),
+		)
 		res := ApiRes[any]{
 			Status: "fail",
 			Code:   http.StatusInternalServerError,
@@ -132,6 +159,15 @@ func (ah *ApiHandler) ServeWs(w http.ResponseWriter, r *http.Request) {
 
 	RandomCrypto, err := rand.Int(rand.Reader, big.NewInt(128))
 	if err != nil {
+		ah.Logger.LogAttrs(
+			ctx,
+			slog.LevelWarn,
+			"request",
+			slog.Group("error",
+				slog.String("message", "fail to generate random crypto number for room id"),
+				slog.Any("detail", err),
+			),
+		)
 		res := ApiRes[any]{
 			Status: "fail",
 			Code:   http.StatusInternalServerError,
@@ -163,11 +199,26 @@ func (ah *ApiHandler) ServeWs(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	err := godotenv.Load()
+	if err != nil {
+		err = fmt.Errorf("fail to load env %w", err)
+		panic(err)
+	}
+
+	var logLevel slog.Level = slog.LevelError
+	if os.Getenv("ENVIRONMENT") != "production" {
+		logLevel = slog.LevelDebug
+	}
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: logLevel,
+	}))
+	slog.SetDefault(logger)
+
 	allowedOrigins := map[string]bool{
 		"http://localhost:5173": true,
 	}
 
-	hub := internalWs.NewHub()
+	hub := internalWs.NewHub(logger)
 	upgrader := websocket.Upgrader{
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
@@ -176,15 +227,15 @@ func main() {
 			return exist
 		},
 	}
-	handler := NewApiHandler(hub, upgrader)
+	handler := NewApiHandler(hub, upgrader, logger)
 
 	go hub.Run()
 
 	http.HandleFunc("/v1/rooms", handler.ServeWs)
 	http.HandleFunc("GET /v1/rooms/{code}", handler.JoinRoom)
 
-	log.Println("Server starting on :3000")
+	logger.LogAttrs(context.TODO(), slog.LevelInfo, "start server at port 3000")
 	if err := http.ListenAndServe(":3000", nil); err != nil {
-		log.Fatalf("fail to start at port 3000 %v", err)
+		logger.LogAttrs(context.TODO(), slog.LevelError, "fail to start server at port 3000", slog.Any("error", err))
 	}
 }
