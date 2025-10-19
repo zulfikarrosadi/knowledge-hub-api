@@ -183,7 +183,7 @@ func (h *Hub) Run() {
 					if jobs == 0 {
 						h.Logger.LogAttrs(ctx, slog.LevelDebug, "hub_broadcast",
 							slog.Group("data",
-								slog.String("message", "sending client confirmation to room owner"),
+								slog.String("message", "join proecss complete"),
 								slog.String("room_id", message.Data.RoomId),
 								slog.String("username", client.Username),
 								slog.Int("job", jobs),
