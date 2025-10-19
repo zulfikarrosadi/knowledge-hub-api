@@ -2,7 +2,6 @@ package websocket
 
 import (
 	"fmt"
-	"log"
 	"math/rand"
 	"strconv"
 	"time"
@@ -66,7 +65,6 @@ func (c *Client) ReadPump() {
 				websocket.CloseGoingAway,
 				websocket.CloseAbnormalClosure,
 			) {
-				log.Printf("error: %v", err)
 			}
 			break
 		}
@@ -89,7 +87,6 @@ func (c *Client) WritePump() {
 				c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
-			log.Printf("send new message: %v\n", message)
 			c.Conn.WriteJSON(message)
 		}
 	}
