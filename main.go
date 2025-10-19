@@ -46,7 +46,7 @@ func (ah *ApiHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 	encoder := json.NewEncoder(w)
 
 	roomId := r.PathValue("code")
-	ah.Logger.LogAttrs(ctx, slog.LevelDebug, "request", slog.Group("data", slog.String("room_id", roomId)))
+	ah.Logger.LogAttrs(ctx, slog.LevelDebug, "request_join_room", slog.Group("data", slog.String("room_id", roomId)))
 	if roomId == "" {
 		res := ApiRes[any]{
 			Status: "fail",
@@ -69,7 +69,7 @@ func (ah *ApiHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 	}
 	ah.Hub.CheckRoomId <- &queryRoom
 	if roomExist := <-queryRoom.Reply; !roomExist {
-		ah.Logger.LogAttrs(ctx, slog.LevelDebug, "request", slog.Group("data", slog.Bool("room_exist", roomExist)))
+		ah.Logger.LogAttrs(ctx, slog.LevelDebug, "request_join_room", slog.Group("data", slog.Bool("room_exist", roomExist)))
 		res := ApiRes[any]{
 			Status: "fail",
 			Code:   http.StatusNotFound,
@@ -90,7 +90,7 @@ func (ah *ApiHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 		ah.Logger.LogAttrs(
 			ctx,
 			slog.LevelWarn,
-			"request",
+			"request_join_room",
 			slog.Group("error",
 				slog.String("message", "fail to upgrade connection"),
 				slog.Any("detail", err),
@@ -136,7 +136,7 @@ func (ah *ApiHandler) ServeWs(w http.ResponseWriter, r *http.Request) {
 		ah.Logger.LogAttrs(
 			ctx,
 			slog.LevelWarn,
-			"request",
+			"request_create_room",
 			slog.Group("error",
 				slog.String("message", "fail to upgrade connection"),
 				slog.Any("detail", err),
@@ -162,7 +162,7 @@ func (ah *ApiHandler) ServeWs(w http.ResponseWriter, r *http.Request) {
 		ah.Logger.LogAttrs(
 			ctx,
 			slog.LevelWarn,
-			"request",
+			"request_create_room",
 			slog.Group("error",
 				slog.String("message", "fail to generate random crypto number for room id"),
 				slog.Any("detail", err),
@@ -204,8 +204,7 @@ func main() {
 		err = fmt.Errorf("fail to load env %w", err)
 		panic(err)
 	}
-
-	var logLevel slog.Level = slog.LevelError
+	var logLevel slog.Level = slog.LevelInfo
 	if os.Getenv("ENVIRONMENT") != "production" {
 		logLevel = slog.LevelDebug
 	}
@@ -214,10 +213,11 @@ func main() {
 	}))
 	slog.SetDefault(logger)
 
+	mux := http.NewServeMux()
+
 	allowedOrigins := map[string]bool{
 		"http://localhost:5173": true,
 	}
-
 	hub := internalWs.NewHub(logger)
 	upgrader := websocket.Upgrader{
 		ReadBufferSize:  1024,
@@ -231,11 +231,35 @@ func main() {
 
 	go hub.Run()
 
-	http.HandleFunc("/v1/rooms", handler.ServeWs)
-	http.HandleFunc("GET /v1/rooms/{code}", handler.JoinRoom)
+	mux.HandleFunc("/v1/rooms", handler.ServeWs)
+	mux.HandleFunc("GET /v1/rooms/{code}", handler.JoinRoom)
 
-	logger.LogAttrs(context.TODO(), slog.LevelInfo, "start server at port 3000")
-	if err := http.ListenAndServe(":3000", nil); err != nil {
-		logger.LogAttrs(context.TODO(), slog.LevelError, "fail to start server at port 3000", slog.Any("error", err))
+	host := os.Getenv("HOST")
+	server := &http.Server{
+		Handler: &LoggerMiddleware{
+			Handler: mux,
+			Logger:  logger,
+		},
+		Addr: host,
 	}
+	logger.LogAttrs(context.TODO(), slog.LevelInfo, "start server at "+host)
+	if err := server.ListenAndServe(); err != nil {
+		logger.LogAttrs(context.TODO(), slog.LevelError, "fail to start server at"+host, slog.Any("error", err))
+	}
+}
+
+type LoggerMiddleware struct {
+	http.Handler
+	*slog.Logger
+}
+
+func (lm *LoggerMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	ctx := context.TODO()
+	lm.LogAttrs(ctx, slog.LevelInfo, "request", slog.Group("data",
+		slog.String("method", r.Method),
+		slog.String("path", r.URL.Path),
+		slog.String("user_agent", r.UserAgent()),
+		slog.String("ip", r.RemoteAddr),
+	))
+	lm.Handler.ServeHTTP(w, r)
 }
