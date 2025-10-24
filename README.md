@@ -31,7 +31,7 @@ This backend serves as the real-time layer for the Knowledge Hub app, enabling u
 | -------------------------- | -------------- |
 | Basic WebSocket Connection | ✅ Implemented  |
 | Broadcast Message Handling | ✅ Implemented  |
-| Device Pairing with OTP    | 🧩 In Progress |
+| Device Pairing with OTP    | ✅ Implemented |
 | Message Persistence        | ⏳ Planned      |
 | Encryption Between Devices | ⏳ Planned      |
 
@@ -70,9 +70,8 @@ ws.onmessage = (e) => console.log('message:', e.data);
 
 | Route   | Method | Description                             |
 | ------- | ------ | --------------------------------------- |
-| `/ws`   | GET    | Establish WebSocket connection          |
-| `/pair` | POST   | Generate or validate device OTP pairing |
-| `/sync` | POST   | (Future) Handle offline data sync       |
+| `/v1/rooms`   | GET    | Establish WebSocket connection          |
+| `/v1/rooms/{code}` | GET   | Join room via OTP Code |
 
 ---
 
@@ -88,8 +87,8 @@ This backend is part of a broader initiative to build a **decentralized personal
 
 ## 🧩 Next Steps
 
-* [ ] Implement OTP pairing logic.
-* [ ] Add lightweight session store.
+* [x] Implement OTP pairing logic.
+* [x] Add lightweight session store.
 * [ ] Handle reconnections and disconnections gracefully.
 * [ ] Add conflict resolution for offline notes.
 
