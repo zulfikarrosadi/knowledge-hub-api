@@ -116,7 +116,7 @@ func (ah *ApiHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 		Conn:        conn,
 		RoomId:      roomId,
 		Status:      internalWs.CONN_PENDING,
-		Send:        make(chan *internalWs.WsPayload[internalWs.WsData], 256),
+		Send:        make(chan *internalWs.WsPayload, 256),
 		IsRoomOwner: false,
 		Username:    internalWs.GenerateUsername(),
 	}
@@ -186,7 +186,7 @@ func (ah *ApiHandler) ServeWs(w http.ResponseWriter, r *http.Request) {
 	client := &internalWs.Client{
 		Hub:         ah.Hub,
 		Conn:        conn,
-		Send:        make(chan *internalWs.WsPayload[internalWs.WsData], 256),
+		Send:        make(chan *internalWs.WsPayload, 256),
 		RoomId:      RandomCrypto.String(),
 		Status:      internalWs.CONN_APPROVED,
 		Username:    internalWs.GenerateUsername(),

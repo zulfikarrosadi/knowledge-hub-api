@@ -11,7 +11,7 @@ type Hub struct {
 	Rooms map[string]map[*Client]bool
 
 	// to send the message to the same websocket connection
-	Broadcast chan *WsPayload[WsData]
+	Broadcast chan *WsPayload
 
 	// to add new client / new websocket connection to the map
 	Register chan *Client
@@ -31,7 +31,7 @@ type QueryRoomId struct {
 
 func NewHub(slog *slog.Logger) *Hub {
 	return &Hub{
-		Broadcast:   make(chan *WsPayload[WsData]),
+		Broadcast:   make(chan *WsPayload),
 		Register:    make(chan *Client),
 		Unregister:  make(chan *Client),
 		Rooms:       make(map[string]map[*Client]bool),
@@ -56,13 +56,14 @@ func (h *Hub) Run() {
 						slog.String("username", newClient.Username),
 					),
 				)
-				res := &WsPayload[WsData]{
-					Type:    CREATE_ROOM,
-					Status:  "success",
-					IsOwner: newClient.IsRoomOwner,
-					Data: WsData{
+				res := &WsPayload{
+					Type:   CREATE_ROOM,
+					Status: "success",
+					Data:   nil,
+					User: User{
 						RoomId:   newClient.RoomId,
 						Username: newClient.Username,
+						IsOwner:  true,
 					},
 				}
 				newClient.Send <- res
@@ -75,15 +76,17 @@ func (h *Hub) Run() {
 						slog.String("username", newClient.Username),
 					),
 				)
-				res := &WsPayload[WsData]{
-					Type:    JOIN_ROOM,
-					Status:  "pending",
-					IsOwner: newClient.IsRoomOwner,
-					Data: WsData{
+				res := &WsPayload{
+					Type:   JOIN_ROOM,
+					Status: CONN_PENDING,
+					Data:   nil,
+					User: User{
 						RoomId:   newClient.RoomId,
 						Username: newClient.Username,
+						IsOwner:  false,
 					},
 				}
+
 				// send confirmation to new user
 				newClient.Send <- res
 
@@ -115,19 +118,8 @@ func (h *Hub) Run() {
 				)
 				continue
 			}
-			if _, clientExist := room[client]; clientExist {
-				delete(h.Rooms[client.RoomId], client)
-				close(client.Send)
-				if len(room) == 0 {
-					delete(h.Rooms, client.RoomId)
-					h.Logger.LogAttrs(ctx, slog.LevelDebug, "hub_unregister",
-						slog.Group("data",
-							slog.String("message", "room empty and already deleted"),
-							slog.String("room_id", client.RoomId),
-						),
-					)
-				}
-			} else {
+			_, clientExist := room[client]
+			if !clientExist {
 				h.Logger.LogAttrs(ctx, slog.LevelWarn, "hub_unregister",
 					slog.Group("data",
 						slog.String("message", "client already unregistered, ignoring request"),
@@ -135,17 +127,31 @@ func (h *Hub) Run() {
 						slog.String("username", client.Username),
 					),
 				)
+				continue
+			}
+
+			delete(h.Rooms[client.RoomId], client)
+			close(client.Send)
+			if len(room) == 0 {
+				delete(h.Rooms, client.RoomId)
+				h.Logger.LogAttrs(ctx, slog.LevelDebug, "hub_unregister",
+					slog.Group("data",
+						slog.String("message", "room empty and already deleted"),
+						slog.String("room_id", client.RoomId),
+					),
+				)
 			}
 		case message := <-h.Broadcast:
-			clientInRoom, roomExist := h.Rooms[message.Data.RoomId]
+			clientInRoom, roomExist := h.Rooms[message.User.RoomId]
 			if !roomExist {
 				continue
 			}
 			if message.Status == CONN_REJECTED || message.Status == CONN_APPROVED {
 				jobs := 2
 				for client := range clientInRoom {
-					if client.Username == message.Data.Username {
-						if message.Status == CONN_REJECTED {
+					if client.Username == message.User.Username {
+						switch message.Status {
+						case CONN_REJECTED:
 							go func() {
 								h.Unregister <- client
 							}()
@@ -153,27 +159,28 @@ func (h *Hub) Run() {
 							h.Logger.LogAttrs(ctx, slog.LevelDebug, "hub_broadcast",
 								slog.Group("data",
 									slog.String("message", "client join rejected"),
-									slog.String("room_id", message.Data.RoomId),
-									slog.String("username", message.Data.Username),
+									slog.String("room_id", message.User.RoomId),
+									slog.String("username", message.User.Username),
 									slog.Int("job", jobs),
 								))
-						} else if message.Status == CONN_APPROVED {
+						case CONN_APPROVED:
 							client.Status = CONN_APPROVED
 							client.Send <- message
 							jobs -= 1
 							h.Logger.LogAttrs(ctx, slog.LevelDebug, "hub_broadcast",
 								slog.Group("data",
 									slog.String("message", "client join approved"),
-									slog.String("room_id", message.Data.RoomId),
-									slog.String("username", message.Data.Username),
+									slog.String("room_id", message.User.RoomId),
+									slog.String("username", message.User.Username),
 									slog.Int("job", jobs),
 								))
+
 						}
 					} else if client.IsRoomOwner {
 						h.Logger.LogAttrs(ctx, slog.LevelDebug, "hub_broadcast",
 							slog.Group("data",
 								slog.String("message", "sending client confirmation to room owner"),
-								slog.String("room_id", message.Data.RoomId),
+								slog.String("room_id", message.User.RoomId),
 								slog.String("username", client.Username),
 								slog.Int("job", jobs),
 							))
@@ -184,7 +191,7 @@ func (h *Hub) Run() {
 						h.Logger.LogAttrs(ctx, slog.LevelDebug, "hub_broadcast",
 							slog.Group("data",
 								slog.String("message", "join proecss complete"),
-								slog.String("room_id", message.Data.RoomId),
+								slog.String("room_id", message.User.RoomId),
 								slog.String("username", client.Username),
 								slog.Int("job", jobs),
 							))
@@ -197,9 +204,12 @@ func (h *Hub) Run() {
 				h.Logger.LogAttrs(ctx, slog.LevelDebug, "hub_broadcast",
 					slog.Group("data",
 						slog.String("message", "broadcast data to all client"),
-						slog.String("room_id", message.Data.RoomId),
+						slog.String("room_id", message.User.RoomId),
 						slog.String("username", client.Username),
 					))
+				if client.Status == CONN_PENDING {
+					continue
+				}
 				select {
 				case client.Send <- message:
 				default:

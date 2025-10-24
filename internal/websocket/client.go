@@ -24,7 +24,7 @@ type Client struct {
 	Conn *websocket.Conn
 
 	// buffered channel of outbound message
-	Send chan *WsPayload[WsData]
+	Send chan *WsPayload
 
 	RoomId string
 
@@ -37,17 +37,18 @@ type Client struct {
 	Username string
 }
 
-type WsData struct {
-	RoomId   string `json:"room_id"`
+type User struct {
 	Username string `json:"username"`
+	RoomId   string `json:"room_id"`
+	IsOwner  bool   `json:"is_owner"`
 }
 
-type WsPayload[T any] struct {
+type WsPayload struct {
 	Type string `json:"type"`
 	// give user info wether the connection is success, pending, fail or rejected
-	Status  string `json:"status"`
-	Data    T      `json:"data,omitempty"`
-	IsOwner bool   `json:"is_owner"`
+	Status string `json:"join_status"`
+	Data   any    `json:"data,omitempty"`
+	User   User   `json:"user"`
 }
 
 func (c *Client) ReadPump() {
@@ -57,7 +58,7 @@ func (c *Client) ReadPump() {
 	}()
 
 	for {
-		data := &WsPayload[WsData]{}
+		data := &WsPayload{}
 		err := c.Conn.ReadJSON(data)
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(
